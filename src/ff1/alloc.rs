@@ -141,7 +141,10 @@ impl Operations for FlexibleNumeralString {
 }
 
 impl FlexibleNumeralString {
-    fn num_radix(&self, radix: u32) -> BigUint {
+    /// numeral string to bigunit
+    /// 
+    /// returns BigUint
+    pub fn num_radix(&self, radix: u32) -> BigUint {
         let mut res = BigUint::zero();
         for i in &self.0 {
             res *= radix;
@@ -149,8 +152,10 @@ impl FlexibleNumeralString {
         }
         res
     }
-
-    fn str_radix(mut x: BigUint, radix: u32, m: usize) -> Self {
+    /// convert to numeral string using radix
+    /// 
+    /// returns flexible numeral string
+    pub fn str_radix(mut x: BigUint, radix: u32, m: usize) -> Self {
         let mut res = vec![0; m];
         for i in 0..m {
             res[m - 1 - i] = (&x % radix).to_u16().unwrap();
@@ -344,6 +349,7 @@ impl NumeralString for BinaryNumeralString {
             tmp
         })
     }
+    
 }
 
 pub struct BinaryOps {
@@ -387,7 +393,7 @@ impl BinaryOps {
         assert_eq!(data.len(), (num_bits + 7) / 8);
         BinaryOps { data, num_bits }
     }
-
+ 
     fn num_radix(&self, radix: u32) -> BigUint {
         // Check that radix == 2
         assert_eq!(radix, 2);

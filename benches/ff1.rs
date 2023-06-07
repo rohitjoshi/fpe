@@ -23,12 +23,27 @@ fn setup_criterion() -> Criterion_ {
 #[cfg(unix)]
 use pprof::criterion::{Output, PProfProfiler};
 
-fn ff1_binary_benchmark(c: &mut Criterion<CyclesPerByte>) {
+fn ff1_binary_benchmark(c: &mut Criterion_) {
     let bytes = vec![7; 1000];
 
     let fpe_ff = fpe::ff1::FF1::<Aes256>::new(&[0; 32], 2).unwrap();
-    let mut fpe_group = c.benchmark_group("fpe");
-    for size in [10, 100, 1000].iter() {
+    let mut fpe_group = c.benchmark_group("fpe_10");
+    for size in [5, 9, 16, 10, 100, 1000].iter() {
+        fpe_group.throughput(Throughput::Bytes(*size as u64));
+        fpe_group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
+            b.iter(|| {
+                fpe_ff.encrypt(
+                    &[],
+                    &fpe::ff1::BinaryNumeralString::from_bytes_le(&bytes[..size]),
+                )
+            });
+        });
+    }
+    fpe_group.finish();
+
+    let fpe_ff = fpe::ff1::FF1::<Aes256>::new_with_faistel_rounds(&[0; 32], 2,2).unwrap();
+    let mut fpe_group = c.benchmark_group("fpe_2");
+    for size in [5, 9, 16, 10, 100, 1000].iter() {
         fpe_group.throughput(Throughput::Bytes(*size as u64));
         fpe_group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
             b.iter(|| {

@@ -219,6 +219,7 @@ fn generate_s<'a, CIPH: BlockEncrypt>(
 pub struct FF1<CIPH: BlockCipher> {
     ciph: CIPH,
     radix: Radix,
+    faistel_rounds: u8,
 }
 
 impl<CIPH: BlockCipher + KeyInit> FF1<CIPH> {
@@ -228,8 +229,17 @@ impl<CIPH: BlockCipher + KeyInit> FF1<CIPH> {
     pub fn new(key: &[u8], radix: u32) -> Result<Self, InvalidRadix> {
         let ciph = CIPH::new(GenericArray::from_slice(key));
         let radix = Radix::from_u32(radix)?;
-        Ok(FF1 { ciph, radix })
+        Ok(FF1 { ciph, radix, faistel_rounds:10 })
     }
+    /// Creates a new FF1 object for the given key and radix.
+    ///
+    /// Returns an error if the given radix is not in [2..2^16].
+    pub fn new_with_faistel_rounds(key: &[u8], radix: u32, faistel_rounds:u8 ) -> Result<Self, InvalidRadix> {
+        let ciph = CIPH::new(GenericArray::from_slice(key));
+        let radix = Radix::from_u32(radix)?;
+        Ok(FF1 { ciph, radix, faistel_rounds })
+    }
+
 }
 
 impl<CIPH: BlockCipher + BlockEncrypt + Clone> FF1<CIPH> {
@@ -276,7 +286,7 @@ impl<CIPH: BlockCipher + BlockEncrypt + Clone> FF1<CIPH> {
         for _ in 0..((((-(t as i32) - (b as i32) - 1) % 16) + 16) % 16) {
             prf.update(&[0]);
         }
-        for i in 0..10 {
+        for i in 0..self.faistel_rounds {
             let mut prf = prf.clone();
             prf.update(&[i]);
             prf.update(x_b.to_be_bytes(self.radix.to_u32(), b).as_ref());
@@ -346,8 +356,8 @@ impl<CIPH: BlockCipher + BlockEncrypt + Clone> FF1<CIPH> {
         for _ in 0..((((-(t as i32) - (b as i32) - 1) % 16) + 16) % 16) {
             prf.update(&[0]);
         }
-        for i in 0..10 {
-            let i = 9 - i;
+        for i in 0..self.faistel_rounds {
+            let i = self.faistel_rounds - 1 - i;
             let mut prf = prf.clone();
             prf.update(&[i]);
             prf.update(x_a.to_be_bytes(self.radix.to_u32(), b).as_ref());
@@ -378,6 +388,187 @@ impl<CIPH: BlockCipher + BlockEncrypt + Clone> FF1<CIPH> {
 #[cfg(test)]
 mod tests {
     use super::{InvalidRadix, Radix, MIN_NS_LEN, MIN_RADIX_2_NS_LEN};
+   // use super::ff1::BinaryNumeralString;
+   
+     use crate::ff1::FF1;
+    use num_bigint::{BigUint, ToBigUint};
+     use crate::ff1::{FlexibleNumeralString, BinaryNumeralString};
+     use aes::Aes256;
+
+      #[test]
+    fn binary_numeral_test() {
+        let bytes = "123456789".as_bytes();
+        let num = BigUint::parse_bytes(bytes, 10).unwrap();
+        let num_bytes = num.to_bytes_le();
+        let num_1 = BigUint::from_bytes_le(&num_bytes);
+        println!("bytes:{:?}, num:{}, num_bytes:{:?}, num_1:{:?}", bytes, num, num_bytes, num_1);
+        
+        assert_eq!(num, num_1);
+        let num_1_str  = num_1.to_str_radix(10);
+        let num_1_bytes = num_1_str.as_bytes();
+        println!("bytes:{:?}, num_1_str:{:?}", bytes, num_1_bytes);
+        assert_eq!(bytes.to_vec(), num_1_bytes);
+    }
+      #[test]
+    fn binary_numeral_string_test() {
+         let bytes = "123456789".as_bytes();
+         let n1 = BigUint::parse_bytes(bytes, 10).unwrap();
+         let b1 = n1.to_bytes_le();
+         println!("bytes:{:?}, n1:{}, b1:{:?}", bytes, n1, b1);
+         let ns =  BinaryNumeralString::from_bytes_le(&bytes);
+         println!("ns:{:?}", ns);
+         let ns_num1 = BigUint::parse_bytes(&ns.to_bytes_le(),10).unwrap();
+         println!("ns_num1:{:?}", ns_num1);
+         assert_eq!(n1, ns_num1);
+         assert_eq!(bytes, ns.to_bytes_le());
+    }
+      #[test]
+    fn fpe_ff1_test() {
+        let bytes = b"123456789";
+        let ns =  BinaryNumeralString::from_bytes_le(bytes);
+        let num = BigUint::parse_bytes(&ns.to_bytes_le(),10).unwrap();
+        println!("num:{:?}, ns_to_le:{:?}", num, ns.to_bytes_le());
+
+        let fpe_ff = FF1::<Aes256>::new(&[0; 32], 2).unwrap();
+        let ns_encrypted = fpe_ff.encrypt(&[], &ns).unwrap();
+        println!("ns_encrypted_to_le:{:?}", ns_encrypted.to_bytes_le());
+
+        //UNCOMMENT to reproduce the error
+        //let num_enc = BigUint::parse_bytes(&ns_encrypted.to_bytes_le(),10).unwrap();
+        //println!("num_enc_1:{}", num_enc);
+
+        let ns_decrypted = fpe_ff.decrypt(&[], &ns_encrypted).unwrap();
+        println!("ns_decrypted_to_le:{:?}", ns_decrypted.to_bytes_le());
+        assert_eq!(bytes.to_vec(), ns_decrypted.to_bytes_le());
+
+        let num_decrypted = BigUint::parse_bytes(&ns_decrypted.to_bytes_le(),10).unwrap();
+        println!("num_decrypted:{}", num_decrypted);
+
+        assert_eq!(num, num_decrypted);
+
+
+        let num_enc_1 = BigUint::from_bytes_le(&ns_encrypted.to_bytes_le());
+        println!("num_enc_1:{}", num_enc_1);
+        let num_decrypted_1= BigUint::from_bytes_le(&ns_decrypted.to_bytes_le());
+        println!("num_decrypted_1:{}", num_decrypted_1);
+    }
+      #[test]
+    fn ff1_test() {
+         
+         let bytes = "123456789".as_bytes();
+         let ns =  BinaryNumeralString::from_bytes_le(&bytes);
+         println!("ns:{:?}", ns);
+         assert_eq!(bytes, ns.to_bytes_le());
+
+        let num_1 = BigUint::parse_bytes(bytes, 10).unwrap();
+         let num_2 = BigUint::parse_bytes(&ns.to_bytes_le(),10).unwrap();
+         println!("num_1:{:?}, num_2:{:?}", num_1, num_2);
+         assert_eq!(num_1, num_2);
+
+         let nn_le = num_1.to_radix_le(10);
+         println!("nn_le:{:?}", nn_le);
+         let ns =  BinaryNumeralString::from_bytes_le(&nn_le);
+          println!("ns:{:?}", ns);
+
+        let fpe_ff = FF1::<Aes256>::new(&[0; 32], 2).unwrap();
+         let ns_encrypted = fpe_ff.encrypt(&[], &ns).unwrap();
+          println!("ns_encrypted:{:?}", ns_encrypted);
+          let ns_decrypted = fpe_ff.decrypt(&[], &ns_encrypted).unwrap();
+          println!("ns_decrypted:{:?}", ns_decrypted);
+          
+          let ns_encrypted_le = ns_encrypted.to_bytes_le();
+          println!("ns_encrypted_le:{:?}", ns_encrypted_le);
+
+          let num1 = BigUint::from_bytes_le(&ns_encrypted_le);
+           println!("num1:{}", num1);
+
+           let nn = num1.to_str_radix(10);
+           println!("nn:{}", nn);
+           let nn_le = num1.to_radix_le(10);
+           println!("nn_le:{:?}", nn_le);
+           
+        
+        //  let num2 = BigUint::parse_bytes(&ns_encrypted_le, 10).unwrap();
+          
+        //   println!("num1:{}, num2:{}", num1, num2);
+
+        //  //println!("bytes:{:?}\n, ns:{:?}\n, ns_encrypted:{:?}\n, num1:{:?}\n", bytes, ns, ns_encrypted, num1);
+        //  let num1_ns = num1.to_bytes_le();
+        //   println!("num1_ns:{:?}", num1_ns);
+        //  let ns2 = BinaryNumeralString::from_bytes_le(&num1_ns);
+        //  println!("ns2:{:?}", ns2);
+         let ns_decrypted = fpe_ff.decrypt(&[], &ns_encrypted).unwrap();
+          println!("ns_decrypted:{:?}", ns_decrypted);
+        // let num2 = BigUint::parse_bytes(&ns_decrypted.to_bytes_le(), 10).unwrap();
+        //println!("num2:{:?}", num2);
+        // assert_eq!(num_1, num2);
+
+         // let num_2_str  = num2.to_str_radix(10);
+        //  println!("num_2_str:{:?}", ns_decrypted.to_bytes_le());
+         //  assert_eq!(bytes, ns_decrypted.to_bytes_le());
+
+
+    }
+      #[test]
+    fn ff1_flexible_numeral_test() {
+         let fpe_ff = FF1::<Aes256>::new(&[0; 32], 10).unwrap();
+         let bytes = "123456789".as_bytes();
+         let n1 = BigUint::parse_bytes(bytes, 10).unwrap();
+         let b1 = n1.to_bytes_le();
+         println!("bytes:{:?}, n1:{}, b1:{:?}", bytes, n1, b1);
+         let ns =  FlexibleNumeralString::str_radix(n1, 10, bytes.len());
+         println!("ns:{:?}", ns);
+        
+        //  let ns_num1 = BigUint::parse_bytes(&ns.to_bytes_le(),10).unwrap();
+        //   println!("ns_num1:{:?}", ns_num1);
+
+    
+         let ns_encrypted = fpe_ff.encrypt(&[], &ns).unwrap();
+          println!("ns_encrypted:{:?}", ns_encrypted);
+         let num1 = ns_encrypted.num_radix(10);
+        //  let num1 = BigUint::from_bytes_le(&ns_encrypted.to_bytes_le());
+          println!("num1:{}", num1);
+
+         //println!("bytes:{:?}\n, ns:{:?}\n, ns_encrypted:{:?}\n, num1:{:?}\n", bytes, ns, ns_encrypted, num1);
+        //  let num1_ns = num1.to_bytes_le();
+        //   println!("num1_ns:{:?}", num1_ns);
+        //  let ns2 = FlexibleNumeralString::from_bytes(&num1_ns);
+        //  println!("ns2:{:?}", ns2);
+         let ns_decrypted = fpe_ff.decrypt(&[], &ns_encrypted).unwrap();
+          println!("ns_decrypted:{:?}", ns_decrypted);
+          let num2 = ns_decrypted.num_radix(10);
+        // let num2 = BigUint::parse_bytes(&ns_decrypted.to_bytes_le(), 10).unwrap();
+        println!("num2:{:?}", num2);
+        let n1 = BigUint::parse_bytes(bytes, 10).unwrap();
+         assert_eq!(n1, num2);
+
+          let num_2_str  = num2.to_str_radix(10);
+         // println!("num_2_str:{:?}", ns_decrypted.to_bytes_le());
+           assert_eq!(bytes, num_2_str.as_bytes());
+
+
+    }
+
+    #[test]
+    fn ff1_encrypt_decrypt() {
+        let key = b"uvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        let tweak = b"123xyz1234FGHIJKLMNOPQRSTUVWXYZ";
+
+        let bytes = b"439481678"; //Step3: FF1 Encrypt: input:439481678, output:70908791
+        let radix = 10;
+        let rounds = 2;
+        let fpe_ff = FF1::<Aes256>::new_with_faistel_rounds(key, radix, rounds).unwrap();
+        let num = BigUint::parse_bytes(bytes, radix).unwrap(); 
+        let fns = FlexibleNumeralString::str_radix(num, radix, bytes.len());
+        let ns_encrypted = fpe_ff.encrypt(&[], &fns).unwrap();
+        let ns_decrypted = fpe_ff.decrypt(&[], &ns_encrypted).unwrap();
+        let num = ns_decrypted.num_radix(radix);
+
+        let new_str = num.to_str_radix(10);
+        assert_eq!(bytes, new_str.as_bytes());
+
+    }
+    
 
     #[test]
     fn radix() {
